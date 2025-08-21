@@ -3,7 +3,8 @@ const { authMiddleware } = require('../middleware/auth');
 const { body, validationResult } = require('express-validator');
 const crypto = require('crypto');
 const { MercadoPagoConfig, Preference, Payment } = require('mercadopago');
-const { getAsync, runAsync } = require('../utils/dbHelpers'); // Funções importadas
+const { getAsync, runAsync } = require('../utils/dbHelpers');
+const notificationService = require('../services/notifications');
 const db = require('../database/db');
 const router = express.Router();
 
@@ -184,11 +185,68 @@ router.post('/webhook', async (req, res) => {
           const status = paymentResult.status;
 
           if (order_id && status) {
+              // Atualizar o status do pagamento
               await runAsync(
                   'UPDATE orders SET payment_status = ? WHERE id = ?',
                   [status, order_id]
               );
               console.log(`Pedido ${order_id} atualizado para o status de pagamento: ${status}`);
+
+              // Se o pagamento foi aprovado, iniciar processo de entrega
+              if (status === 'approved') {
+                  try {
+                      // Buscar informações do pedido
+                      const order = await getAsync(
+                          'SELECT delivery_address FROM orders WHERE id = ?',
+                          [order_id]
+                      );
+
+                      if (order) {
+                          // TODO: Integrar com a API do Uber
+                          // const uberResponse = await requestUberDelivery(order.delivery_address);
+                          
+                          // Atualizar status do pedido para "em preparação"
+                          await runAsync(
+                              'UPDATE orders SET status = ? WHERE id = ?',
+                              ['preparing', order_id]
+                          );
+
+                          // Notificar admin e cliente sobre o status
+                          await notificationService.notifyStatusChange(order_id, 'preparing');
+                      }
+                  } catch (deliveryError) {
+                      console.error('Erro ao iniciar entrega:', deliveryError);
+                      // Não falhar o webhook por erro na entrega
+                  }
+              } 
+              // Se o pagamento foi recusado, cancelar o pedido
+              else if (status === 'rejected' || status === 'cancelled') {
+                  try {
+                      // Atualizar status do pedido para cancelado
+                      await runAsync(
+                          'UPDATE orders SET status = ? WHERE id = ?',
+                          ['cancelled', order_id]
+                      );
+
+                      // Restaurar estoque dos produtos
+                      const orderItems = await getAsync(
+                          'SELECT product_id, quantity FROM order_items WHERE order_id = ?',
+                          [order_id]
+                      );
+
+                      for (const item of orderItems) {
+                          await runAsync(
+                              'UPDATE products SET stock = stock + ? WHERE id = ?',
+                              [item.quantity, item.product_id]
+                          );
+                      }
+
+                      // Notificar admin e cliente sobre o cancelamento
+                      await notificationService.notifyStatusChange(order_id, 'cancelled');
+                  } catch (cancellationError) {
+                      console.error('Erro ao cancelar pedido:', cancellationError);
+                  }
+              }
           }
       } catch (error) {
           console.error(`Erro no webhook ao processar pagamento ${paymentId}:`, error);

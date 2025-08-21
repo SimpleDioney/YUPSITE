@@ -29,6 +29,8 @@ router.get('/', (req, res) => {
     }
     const productsWithCategories = products.map(p => ({
       ...p,
+      stock: Number(p.stock) || 0,
+      price: Number(p.price) || 0,
       categories: p.categories ? p.categories.split(',') : []
     }));
     res.json(productsWithCategories);
@@ -91,7 +93,11 @@ router.get('/:id', (req, res) => {
     if (!product) {
       return res.status(404).json({ error: 'Produto não encontrado' });
     }
-    res.json(product);
+    res.json({
+      ...product,
+      stock: Number(product.stock) || 0,
+      price: Number(product.price) || 0
+    });
   });
 });
 

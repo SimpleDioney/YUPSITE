@@ -11,10 +11,12 @@ const productRoutes = require('./routes/products');
 const orderRoutes = require('./routes/orders');
 const paymentRoutes = require('./routes/payment');
 const deliveryRoutes = require('./routes/delivery');
-const bannerRoutes = require('./routes/banners'); // Importe a nova rota
+const bannerRoutes = require('./routes/banners');
 const couponsAdminRoutes = require('./routes/couponsAdmin');
 const { router: couponsRoutes } = require('./routes/coupons'); 
 const categoriesAdminRoutes = require('./routes/categoriesAdmin');
+const brandsRoutes = require('./routes/brands');
+const brandsAdminRoutes = require('./routes/brandsAdmin');
 const dashboardAdminRoutes = require('./routes/dashboardAdmin');
 const categoriesRoutes = require('./routes/categories');
 
@@ -41,11 +43,13 @@ app.use('/api/delivery', deliveryRoutes);
 app.use('/api/banners', bannerRoutes);
 app.use('/api/coupons', couponsRoutes);
 app.use('/api/categories', categoriesRoutes);
+app.use('/api/brands', brandsRoutes);
 
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/coupons', couponsAdminRoutes);
 app.use('/api/admin/categories', categoriesAdminRoutes);
 app.use('/api/admin/dashboard', dashboardAdminRoutes);
+app.use('/api/admin/brands', brandsAdminRoutes);
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {

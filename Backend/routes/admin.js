@@ -11,15 +11,15 @@ router.use(authMiddleware, adminMiddleware);
 
 // Adicionar produto
 router.post('/products', upload.single('photo'), async (req, res) => {
-  const { name, description, price, type, unit_value, stock, category_ids } = req.body;
+  const { name, description, price, type, unit_value, stock, category_ids, brand_id, preparation_instructions } = req.body;
   const photo = req.file ? req.file.filename : null;
 
   try {
     await runAsync('BEGIN TRANSACTION');
 
     const result = await runAsync(
-      'INSERT INTO products (name, description, photo, price, type, unit_value, stock) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [name, description, photo, price, type, unit_value, stock]
+      'INSERT INTO products (name, description, photo, price, type, unit_value, stock, brand_id, preparation_instructions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [name, description, photo, price, type, unit_value, stock, brand_id || null, preparation_instructions || null]
     );
     const productId = result.lastID;
 
@@ -44,17 +44,19 @@ router.get('/products', async (req, res) => {
   try {
     // A consulta agora junta as categorias e agrupa-as para cada produto
     const products = await getAllAsync(`
-      SELECT p.*, GROUP_CONCAT(c.id) as category_ids
+      SELECT p.*, GROUP_CONCAT(c.id) as category_ids, b.name as brand_name
       FROM products p
       LEFT JOIN product_categories pc ON p.id = pc.product_id
       LEFT JOIN categories c ON pc.category_id = c.id
+      LEFT JOIN brands b ON p.brand_id = b.id
       GROUP BY p.id
       ORDER BY p.created_at DESC
     `);
     
     const formattedProducts = products.map(p => ({
       ...p,
-      price: p.price,
+      stock: Number(p.stock) || 0,
+      price: Number(p.price) || 0,
       category_ids: p.category_ids ? p.category_ids.split(',').map(Number) : []
     }));
 
@@ -66,7 +68,7 @@ router.get('/products', async (req, res) => {
 
 router.put('/products/:id', upload.single('photo'), async (req, res) => {
   const { id } = req.params;
-  const { name, description, price, type, unit_value, stock, is_active, category_ids } = req.body;
+  const { name, description, price, type, unit_value, stock, is_active, category_ids, brand_id, preparation_instructions } = req.body;
   const hasNewPhoto = req.file;
 
   try {
@@ -96,9 +98,11 @@ router.put('/products/:id', upload.single('photo'), async (req, res) => {
         unit_value = ?,
         stock = ?,
         is_active = ?,
-        photo = ?
+        photo = ?,
+        brand_id = ?,
+        preparation_instructions = ?
       WHERE id = ?`,
-      [name, description, price, type, unit_value, stock, is_active === 'true' ? 1 : 0, photoToUpdate, id]
+      [name, description, price, type, unit_value, stock, is_active === 'true' ? 1 : 0, photoToUpdate, brand_id || null, preparation_instructions || null, id]
     );
 
     // Atualiza as categorias (remove as antigas e insere as novas)

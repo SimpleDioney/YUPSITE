@@ -1,7 +1,7 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/store/authStore';
-import { LayoutDashboard, Tag, Ticket, Package, ShoppingCart, MessageCircle, BarChart3, Users, ArrowLeft, Image  } from 'lucide-react';
+import { LayoutDashboard, Tag, Ticket, Package, ShoppingCart, MessageCircle, BarChart3, Users, ArrowLeft, Image, Bookmark } from 'lucide-react';
 
 export default function AdminLayout() {
   const location = useLocation();
@@ -26,6 +26,7 @@ export default function AdminLayout() {
     { path: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { path: '/admin/products', label: 'Produtos', icon: Package },
     { path: '/admin/categories', label: 'Categorias', icon: Tag },
+    { path: '/admin/brands', label: 'Marcas', icon: Bookmark },
     { path: '/admin/coupons', label: 'Cupons', icon: Ticket },
     { path: '/admin/orders', label: 'Pedidos', icon: ShoppingCart },
     { path: '/admin/banners', label: 'Banners', icon: Image },

@@ -27,6 +27,7 @@ export function ProductCard({ product }: ProductCardProps) {
     e.preventDefault();
     e.stopPropagation();
     
+    console.log('Product stock:', product.stock); // Debug
     if (product.stock <= 0) {
       toast({
         title: 'Produto indisponível',
@@ -36,17 +37,29 @@ export function ProductCard({ product }: ProductCardProps) {
       return;
     }
 
-    addItem({
-      productId: product.id,
-      name: product.name,
-      price: product.price,
-      photo: product.photo,
-    });
+        try {
+      const item = {
+        id: product.id,
+        name: product.name,
+        price: product.price,
+        photo: product.photo,
+        quantity: 1,
+        stock: Number(product.stock) // Garantir que é número
+      };
+      console.log('Adding item to cart:', item); // Debug
+      addItem(item);
 
-    toast({
-      title: 'Produto adicionado!',
-      description: `${product.name} foi adicionado ao carrinho`,
-    });
+      toast({
+        title: 'Produto adicionado!',
+        description: `${product.name} foi adicionado ao carrinho`,
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Erro ao adicionar produto',
+        description: error.message,
+        variant: 'destructive',
+      });
+    }
   };
 
   if (!product.is_active) {

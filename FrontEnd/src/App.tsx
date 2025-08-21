@@ -29,6 +29,7 @@ import OrderDetailPage from "./pages/OrderDetailPage";
 import { DashboardAdmin } from "./pages/admin/DashboardAdmin";
 import { CategoriesAdmin } from "./pages/admin/CategoriesAdmin";
 import { CouponsAdmin } from "./pages/admin/CouponsAdmin";
+import BrandsAdmin from "./pages/admin/BrandsAdmin";
 
 function App() {
   return (
@@ -95,6 +96,7 @@ function App() {
             <Route path="coupons" element={<CouponsAdmin />} />
             <Route path="orders" element={<OrdersAdmin />} />
             <Route path="banners" element={<BannerAdmin />} />
+            <Route path="brands" element={<BrandsAdmin />} />
           </Route>
 
           <Route path="*" element={<NotFound />} />

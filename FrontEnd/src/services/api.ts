@@ -112,6 +112,11 @@ export const adminAPI = {
   createCoupon: (data: any) => api.post('/admin/coupons', data),
   updateCoupon: (id: number, data: any) => api.put(`/admin/coupons/${id}`, data),
   deleteCoupon: (id: number) => api.delete(`/admin/coupons/${id}`),
+
+  getBrands: () => api.get('/brands'),
+  createBrand: (data: { name: string; description?: string }) => api.post('/admin/brands', data),
+  updateBrand: (id: number, data: { name: string; description?: string }) => api.put(`/admin/brands/${id}`, data),
+  deleteBrand: (id: number) => api.delete(`/admin/brands/${id}`),
 };
 
 // Orders API calls

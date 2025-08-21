@@ -6,11 +6,13 @@ import { Button } from '@/components/ui/button';
 import { Price } from '@/components/ui/price';
 import { useCartStore } from '@/store/cartStore';
 import { useAuthUIStore } from "@/store/authUIStore";
+import { useToast } from '@/hooks/use-toast';
 
 import { useAuthStore } from '@/store/authStore';
 
 export function CartDrawer() {
   const items = useCartStore((state) => state.items);
+  const { toast } = useToast();
   const isOpen = useCartStore((state) => state.isOpen);
   const totalPrice = useCartStore((state) => state.totalPrice);
   const closeCart = useCartStore((state) => state.closeCart);
@@ -88,7 +90,7 @@ export function CartDrawer() {
                           </Button>
                         </div>
                       ) : (
-                        <div className="space-y-6" key="cart-items-list">
+                        <div className="space-y-6">
                           {items.map((item) => (
                             <div key={item.id} className="flex items-center space-x-4">
                               {/* Product Image */}
@@ -107,31 +109,57 @@ export function CartDrawer() {
                                 <h4 className="text-sm font-medium text-foreground truncate">
                                   {item.name}
                                 </h4>
-                                <Price amount={item.price} size="sm" className="mt-1" />
+                                <div className="flex items-center justify-between mt-1">
+                                  <Price amount={item.price} size="sm" />
+                                  <span className="text-xs text-muted-foreground">
+                                    {item.quantity} un. {item.stock ? `(máx: ${item.stock})` : ''}
+                                  </span>
+                                </div>
                                 
                                 {/* Quantity Controls */}
                                 <div className="flex items-center mt-2 space-x-2">
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                    onClick={() => updateQuantity(item.id, item.quantity - 1)}
-                                  >
-                                    <Minus className="h-3 w-3" />
-                                  </Button>
-                                  
-                                  <span className="text-sm font-medium w-8 text-center">
-                                    {item.quantity}
-                                  </span>
-                                  
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                    onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                                  >
-                                    <Plus className="h-3 w-3" />
-                                  </Button>
+                                  <div className="flex items-center bg-background rounded-lg">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8"
+                                      onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                                    >
+                                      <Minus className="h-3 w-3" />
+                                    </Button>
+                                    
+                                    <span className="text-sm font-medium w-8 text-center">
+                                      {item.quantity}
+                                    </span>
+                                    
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8"
+                                      onClick={() => {
+                                        try {
+                                          if (item.stock && item.quantity >= item.stock) {
+                                            toast({
+                                              title: 'Limite de estoque',
+                                              description: `Apenas ${item.stock} unidades disponíveis`,
+                                              variant: 'destructive',
+                                            });
+                                            return;
+                                          }
+                                          updateQuantity(item.id, item.quantity + 1);
+                                        } catch (error: any) {
+                                          toast({
+                                            title: 'Erro ao atualizar quantidade',
+                                            description: error.message,
+                                            variant: 'destructive',
+                                          });
+                                        }
+                                      }}
+                                      disabled={item.stock ? item.quantity >= item.stock : false}
+                                    >
+                                      <Plus className="h-3 w-3" />
+                                    </Button>
+                                  </div>
 
                                   <Button
                                     variant="ghost"

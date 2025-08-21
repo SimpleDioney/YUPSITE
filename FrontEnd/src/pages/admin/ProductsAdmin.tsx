@@ -33,6 +33,15 @@ interface Product {
   type?: 'package' | 'kg';
   unit_value?: string;
   category_ids?: number[];
+  brand_id?: number;
+  brand_name?: string;
+  preparation_instructions?: string;
+}
+
+interface Brand {
+  id: number;
+  name: string;
+  description?: string;
 }
 
 interface Category {
@@ -43,6 +52,7 @@ interface Category {
 export default function ProductsAdmin() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]); // State para todas as categorias
+  const [brands, setBrands] = useState<Brand[]>([]); // State para todas as marcas
   const [selectedCategories, setSelectedCategories] = useState<number[]>([]); // State para as categorias selecionadas no formulário
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -55,6 +65,8 @@ export default function ProductsAdmin() {
     is_active: true,
     type: 'package',
     unit_value: '1',
+    brand_id: '',
+    preparation_instructions: '',
   });
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
@@ -63,7 +75,17 @@ export default function ProductsAdmin() {
   useEffect(() => {
     fetchProducts();
     fetchCategories();
+    fetchBrands();
   }, []);
+
+  const fetchBrands = async () => {
+    try {
+      const response = await adminAPI.getBrands();
+      setBrands(response.data);
+    } catch (error) {
+      toast({ title: "Erro ao carregar marcas", variant: "destructive" });
+    }
+  };
 
   const fetchProducts = async () => {
     setIsLoading(true);
@@ -115,6 +137,8 @@ export default function ProductsAdmin() {
     submitData.append('unit_value', formData.unit_value);
     submitData.append('is_active', formData.is_active.toString());
     submitData.append('category_ids', JSON.stringify(selectedCategories));
+    submitData.append('brand_id', formData.brand_id);
+    submitData.append('preparation_instructions', formData.preparation_instructions);
 
     if (photoFile) {
       submitData.append('photo', photoFile);
@@ -157,6 +181,8 @@ export default function ProductsAdmin() {
       is_active: product.is_active,
       type: product.type || 'package',
       unit_value: product.unit_value || '1',
+      brand_id: product.brand_id?.toString() || '',
+      preparation_instructions: product.preparation_instructions || '',
     });
     setSelectedCategories(product.category_ids || []);
     setIsDialogOpen(true);
@@ -209,6 +235,8 @@ export default function ProductsAdmin() {
       is_active: true,
       type: 'package',
       unit_value: '1',
+      brand_id: '',
+      preparation_instructions: '',
     });
     setPhotoFile(null);
     setPhotoPreview(null);
@@ -271,6 +299,29 @@ export default function ProductsAdmin() {
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   required
                 />
+              </div>
+              <div>
+                <Label htmlFor="preparation_instructions">Modo de Preparo</Label>
+                <Textarea
+                  id="preparation_instructions"
+                  value={formData.preparation_instructions}
+                  onChange={(e) => setFormData({ ...formData, preparation_instructions: e.target.value })}
+                  placeholder="Descreva o modo de preparo do produto..."
+                />
+              </div>
+              <div>
+                <Label htmlFor="brand_id">Marca</Label>
+                <select
+                  id="brand_id"
+                  className="w-full rounded-md border px-2 py-1"
+                  value={formData.brand_id}
+                  onChange={(e) => setFormData({ ...formData, brand_id: e.target.value })}
+                >
+                  <option value="">Selecione uma marca</option>
+                  {brands.map(brand => (
+                    <option key={brand.id} value={brand.id}>{brand.name}</option>
+                  ))}
+                </select>
               </div>
               <div>
                 <Label>Categorias</Label>

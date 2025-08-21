@@ -9,7 +9,7 @@ interface CartItem {
   quantity: number;
   type?: 'package' | 'kg';
   unit_value?: string;
-  productId?: string;  // Campo opcional para compatibilidade
+  stock: number;  // Campo de estoque não é mais opcional
 }
 
 interface CartState {
@@ -83,18 +83,45 @@ export const useCartStore = create<CartState>()(
           // Garantir que o preço e quantidade sejam números
           const safeItem = {
             ...item,
+            id: item.id,
             price: Number(item.price) || 0,
-            quantity: Number(item.quantity) || 1
+            quantity: Number(item.quantity) || 1,
+            stock: Number(item.stock)
           };
 
+          console.log('Safe item:', safeItem); // Debug
+          
+          // Verificar se há estoque suficiente
           if (existingItem) {
+            console.log('Existing item:', existingItem); // Debug
+            const newQuantity = existingItem.quantity + safeItem.quantity;
+            const stock = Number(safeItem.stock);
+            
+            if (isNaN(stock) || stock <= 0) {
+              throw new Error('Produto sem estoque disponível');
+            }
+            
+            if (newQuantity > stock) {
+              throw new Error(`Apenas ${stock} unidades disponíveis em estoque`);
+            }
+            
             newItems = state.items.map((i) =>
               i.id === item.id
-                ? { ...i, quantity: i.quantity + safeItem.quantity }
+                ? { ...i, quantity: newQuantity, stock }
                 : i
             );
           } else {
-            newItems = [...state.items, safeItem];
+            const stock = Number(safeItem.stock);
+            
+            if (isNaN(stock) || stock <= 0) {
+              throw new Error('Produto sem estoque disponível');
+            }
+            
+            if (safeItem.quantity > stock) {
+              throw new Error(`Apenas ${stock} unidades disponíveis em estoque`);
+            }
+            
+            newItems = [...state.items, { ...safeItem, stock }];
           }
 
           const { subtotal, totalPrice, totalItems } = calculateTotals(newItems, state.deliveryFee, state.coupon);
@@ -120,9 +147,24 @@ export const useCartStore = create<CartState>()(
             const { subtotal, totalPrice, totalItems } = calculateTotals(newItems, state.deliveryFee, state.coupon);
             return { items: newItems, subtotal, totalPrice, totalItems };
           }
+
+          const item = state.items.find(i => i.id === itemId);
+          if (!item) return state;
+
+          console.log('Updating quantity for item:', item); // Debug
+          const stock = Number(item.stock);
+
+          if (isNaN(stock) || stock <= 0) {
+            throw new Error('Produto sem estoque disponível');
+          }
+
+          // Verificar estoque
+          if (quantity > stock) {
+            throw new Error(`Apenas ${stock} unidades disponíveis em estoque`);
+          }
           
           const newItems = state.items.map((i) =>
-            i.id === itemId ? { ...i, quantity } : i
+            i.id === itemId ? { ...i, quantity, stock } : i
           );
           const { subtotal, totalPrice, totalItems } = calculateTotals(newItems, state.deliveryFee, state.coupon);
           return { items: newItems, subtotal, totalPrice, totalItems };

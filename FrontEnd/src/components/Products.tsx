@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowRight } from "lucide-react";
 import { useCartStore } from "@/store/cartStore";
+import { useToast } from "@/hooks/use-toast";
 
 // Define the type for a single product to avoid using 'any'
 interface Product {
@@ -15,11 +16,13 @@ interface Product {
   price: number; // Price is expected in cents from the API
   type: string;
   unit_value: string;
+  stock: number;
 }
 
 export const Products = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const { addItem } = useCartStore();
+  const { toast } = useToast();
 
   useEffect(() => {
     axios.get("http://localhost:3000/api/products")
@@ -77,17 +80,57 @@ export const Products = () => {
                 <h3 className="text-xl font-bold text-foreground mb-2">{product.name}</h3>
                 <p className="text-muted-foreground mb-4">{product.description}</p>
                 
+                {/* Stock Status */}
+                <div className="flex items-center gap-2 mb-4">
+                  {product.stock > 0 ? (
+                    <div className="flex items-center gap-1.5 text-success text-sm">
+                      <div className="w-2 h-2 rounded-full bg-success" />
+                      <span>Em Estoque</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 text-destructive text-sm">
+                      <div className="w-2 h-2 rounded-full bg-destructive" />
+                      <span>Indisponível</span>
+                    </div>
+                  )}
+                </div>
                 
                 <Button
-                  variant="warm"
+                  variant={product.stock > 0 ? "warm" : "secondary"}
+                  disabled={product.stock <= 0}
                   className="w-full group"
-                  onClick={() => addItem({
-                    productId: product.id.toString(),
-                    name: product.name,
-                    price: product.price, 
-                    photo: product.photo,
-                    quantity: 1
-                  })}
+                  onClick={() => {
+                    try {
+                      if (product.stock <= 0) {
+                        toast({
+                          title: 'Produto indisponível',
+                          description: 'Este produto está fora de estoque',
+                          variant: 'destructive',
+                        });
+                        return;
+                      }
+
+                      addItem({
+                        id: product.id.toString(),
+                        name: product.name,
+                        price: product.price, 
+                        photo: product.photo,
+                        quantity: 1,
+                        stock: product.stock
+                      });
+
+                      toast({
+                        title: 'Produto adicionado!',
+                        description: `${product.name} foi adicionado ao carrinho`,
+                      });
+                    } catch (error: any) {
+                      toast({
+                        title: 'Erro ao adicionar produto',
+                        description: error.message,
+                        variant: 'destructive',
+                      });
+                    }
+                  }}
                 >
                   Adicionar ao Pedido
                   <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />

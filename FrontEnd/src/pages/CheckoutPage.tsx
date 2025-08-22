@@ -276,7 +276,7 @@ export default function CheckoutPage() {
               {items.map((item) => (
                 <div key={item.id} className="flex items-center space-x-3">
                   <img src={item.photo 
-    ? `http://localhost:3000/uploads/${item.photo}` 
+    ? `https://yup.notiffly.com.br/api/uploads/${item.photo}` 
     : "/placeholder.jpg"} alt={item.name} className="w-12 h-12 object-cover rounded-lg" />
                   <div className="flex-1 min-w-0">
                     <h3 className="text-sm font-medium truncate">{item.name}</h3>

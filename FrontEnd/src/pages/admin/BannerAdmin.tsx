@@ -211,7 +211,7 @@ export function BannerAdmin() {
         {banners.map((banner) => (
           <div key={banner.id} className="flex items-center justify-between bg-white border p-4 rounded-lg shadow-sm">
             <img
-              src={`http://localhost:3000/uploads/banners/${banner.photo}`}
+              src={`https://yup.notiffly.com.br/api/uploads/banners/${banner.photo}`}
               alt={banner.title}
               className="w-40 h-auto object-cover rounded-md"
             />

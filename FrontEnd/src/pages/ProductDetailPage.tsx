@@ -168,7 +168,7 @@ export default function ProductDetailPage() {
         <div className="relative w-full h-full">
           <img
             src={product.photo 
-              ? `http://localhost:3000/uploads/${product.photo}` 
+              ? `https://yup.notiffly.com.br/api/uploads/${product.photo}` 
               : "/placeholder.jpg"}
             alt={product.name}
             className="w-full h-full object-cover"

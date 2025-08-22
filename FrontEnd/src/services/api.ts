@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const API_BASE_URL = "http://localhost:3000/api";
+const API_BASE_URL = "https://yup.notiffly.com.br/api";
 
 // Create axios instance with base configuration
 export const api = axios.create({
@@ -117,6 +117,7 @@ export const adminAPI = {
   createBrand: (data: { name: string; description?: string }) => api.post('/admin/brands', data),
   updateBrand: (id: number, data: { name: string; description?: string }) => api.put(`/admin/brands/${id}`, data),
   deleteBrand: (id: number) => api.delete(`/admin/brands/${id}`),
+  requestUber: (orderId: string) => api.post('/delivery/create-delivery', { order_id: orderId }),
 };
 
 // Orders API calls

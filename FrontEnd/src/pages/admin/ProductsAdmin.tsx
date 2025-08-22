@@ -478,7 +478,7 @@ export default function ProductsAdmin() {
                       <div className="flex items-center space-x-3">
                         <img
                           src={product.photo 
-    ? `http://localhost:3000/uploads/${product.photo}` 
+    ? `https://yup.notiffly.com.br/api/uploads/${product.photo}` 
     : "/placeholder.jpg"}
                           alt={product.name}
                           className="w-16 h-16 object-cover rounded-lg"

@@ -4,10 +4,11 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Price } from '@/components/ui/price';
 import { ordersAPI } from '@/services/api';
-import { Package, Calendar, MapPin, ArrowLeft } from 'lucide-react';
+import { Package, Calendar, MapPin, ArrowLeft, Truck } from 'lucide-react'; // Ícone Truck importado
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
+// Interface para um item dentro de um pedido
 interface OrderItem {
   id: string;
   product_id: string;
@@ -17,6 +18,7 @@ interface OrderItem {
   price: number;
 }
 
+// Interface para o objeto de pedido completo
 interface Order {
   id: string;
   status: string;
@@ -27,19 +29,24 @@ interface Order {
   delivery_address: string;
   created_at: string;
   items: OrderItem[];
+  delivery_tracking_url?: string; // <-- Campo adicionado para o link do Uber
 }
 
-const statusColors = {
+// Mapeamento de status para cores de badge
+const statusColors: { [key: string]: string } = {
   pending: 'bg-yellow-100 text-yellow-800',
   processing: 'bg-blue-100 text-blue-800',
+  out_for_delivery: 'bg-cyan-100 text-cyan-800', // Cor para o novo status
   shipped: 'bg-purple-100 text-purple-800',
   delivered: 'bg-green-100 text-green-800',
   cancelled: 'bg-red-100 text-red-800',
 };
 
-const statusLabels = {
+// Mapeamento de status para texto em português
+const statusLabels: { [key: string]: string } = {
   pending: 'Pendente',
   processing: 'Processando',
+  out_for_delivery: 'Saiu para Entrega', // <-- Novo status adicionado
   shipped: 'Enviado',
   delivered: 'Entregue',
   cancelled: 'Cancelado',
@@ -118,8 +125,8 @@ export default function OrderDetailPage() {
               Pedido #{String(order.id).padStart(8, '0')}
             </h1>
             <div className="flex items-center gap-2 mt-2">
-              <Badge className={statusColors[order.status as keyof typeof statusColors]}>
-                {statusLabels[order.status as keyof typeof statusLabels]}
+              <Badge className={statusColors[order.status] || 'bg-gray-100 text-gray-800'}>
+                {statusLabels[order.status] || order.status}
               </Badge>
               <span className="text-sm text-muted-foreground">
                 {format(new Date(order.created_at + 'Z'), 'dd/MM/yyyy HH:mm', { locale: ptBR })}
@@ -127,6 +134,26 @@ export default function OrderDetailPage() {
             </div>
           </div>
         </div>
+
+        {/* --- BOTÃO DE RASTREAMENTO DA ENTREGA --- */}
+        {order.status === 'out_for_delivery' && order.delivery_tracking_url && (
+            <div className="mb-6 bg-blue-50 border-2 border-blue-200 p-4 rounded-lg text-center">
+                <a 
+                    href={order.delivery_tracking_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block w-full"
+                >
+                    <Button className="w-full text-lg py-6 bg-blue-600 hover:bg-blue-700">
+                        <Truck className="mr-3 h-5 w-5" />
+                        Acompanhar Entrega em Tempo Real
+                    </Button>
+                </a>
+                <p className="text-xs text-blue-800 mt-2">
+                    Você será redirecionado para o site de rastreamento para ver seu pedido a caminho.
+                </p>
+            </div>
+        )}
 
         <div className="grid gap-6 md:grid-cols-3">
           {/* Order Items */}
@@ -138,13 +165,12 @@ export default function OrderDetailPage() {
                   <div key={item.id} className="flex items-center gap-4 p-4 bg-background rounded-lg border hover:border-primary transition-colors">
                     <div className="relative h-24 w-24 flex-shrink-0">
                       <img
-                        src={item.product_photo ? `http://localhost:3000/uploads/${item.product_photo}` : "/placeholder.jpg"}
+                        src={item.product_photo ? `https://yup.notiffly.com.br/api/uploads/${item.product_photo}` : "/placeholder.svg"}
                         alt={item.product_name}
                         className="h-full w-full object-cover rounded-lg"
                         onError={(e) => {
-                          console.error('Erro ao carregar imagem:', item.product_photo);
                           const img = e.target as HTMLImageElement;
-                          img.src = "/placeholder.jpg";
+                          img.src = "/placeholder.svg";
                         }}
                       />
                       <div className="absolute -top-2 -right-2 bg-primary text-white w-6 h-6 rounded-full flex items-center justify-center text-sm font-medium">

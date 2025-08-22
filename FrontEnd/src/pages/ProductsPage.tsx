@@ -294,7 +294,7 @@ export default function ProductsPage() {
                 <div className="relative overflow-hidden">
                   <img 
                     src={product.photo 
-                      ? `http://localhost:3000/uploads/${product.photo}` 
+                      ? `https://yup.notiffly.com.br/api/uploads/${product.photo}` 
                       : "/placeholder.jpg"}
                     alt={product.name}
                     className="w-full h-64 object-cover group-hover:scale-110 transition-transform duration-500"

@@ -25,7 +25,7 @@ const server = http.createServer(app);
 
 // Middleware
 const corsOptions = {
-  origin: [ 'https://e8c4e737a411.ngrok-free.app', 'http://localhost:8080', 'http://12.0.0.1:5500', 'https://preview--shopfront-sync.lovable.app', 'https://preview--orange-sunshine-remake.lovable.app'],
+  origin: [ 'http://localhost:3000', 'http://localhost:3001','https://e8c4e737a411.ngrok-free.app', 'http://localhost:8080', 'http://12.0.0.1:5500', 'https://preview--shopfront-sync.lovable.app', 'https://preview--orange-sunshine-remake.lovable.app'],
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE'
 };
 app.use(cors(corsOptions));

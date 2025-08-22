@@ -5,25 +5,22 @@ const { runAsync, getAsync } = require('../utils/dbHelpers');
 const notificationService = require('../services/notifications');
 const { authMiddleware } = require('../middleware/auth');
 const axios = require('axios');
-const { URLSearchParams } = require('url')
+const { URLSearchParams } = require('url');
 const db = require('../database/db');
 
 // Obter token de acesso do Uber
 async function getUberToken() {
   try {
-    // Transforma o objeto em dados de formulário
     const params = new URLSearchParams();
     params.append('client_id', process.env.UBER_CLIENT_ID);
     params.append('client_secret', process.env.UBER_CLIENT_SECRET);
     params.append('grant_type', 'client_credentials');
     params.append('scope', 'eats.deliveries');
 
-    // Envia os parâmetros formatados
     const response = await axios.post('https://auth.uber.com/oauth/v2/token', params);
     
     return response.data.access_token;
   } catch (error) {
-    // Adiciona um log mais detalhado do erro da Uber, se existir
     if (error.response) {
       console.error('Erro da API da Uber:', error.response.data);
     }
@@ -32,51 +29,62 @@ async function getUberToken() {
   }
 }
 
-// Criar entrega
+// Criar entrega - Lógica final para Admin e Cliente
 router.post('/create-delivery', authMiddleware, async (req, res) => {
-    const { order_id, pickup_address, dropoff_address } = req.body;
-    const user_id = req.user.id;
-  
-    // 1. Buscamos o pedido e os dados do usuário (cliente) de uma só vez
-    db.get(
-      `SELECT 
+    const { order_id, dropoff_address } = req.body;
+    const user = req.user;
+
+    // Constrói a query SQL base
+    let sql = `
+      SELECT 
          o.*, 
          u.name as user_name, 
          u.phone as user_phone,
          u.email as user_email
        FROM orders o
        JOIN users u ON o.user_id = u.id
-       WHERE o.id = ? AND o.user_id = ?`,
-      [order_id, user_id],
-      (err, order) => {
+       WHERE o.id = ?`;
+    
+    const params = [order_id];
+
+    // Se o requisitante não for admin, garante que ele só possa acessar seus próprios pedidos
+    if (!user.is_admin) {
+        sql += ` AND o.user_id = ?`;
+        params.push(user.id);
+    }
+  
+    // 1. Buscamos o pedido e os dados do usuário (cliente)
+    db.get(sql, params, (err, order) => {
         if (err || !order) {
-          return res.status(404).json({ error: 'Pedido ou usuário não encontrado.' });
+          return res.status(404).json({ error: 'Pedido não encontrado ou acesso não autorizado.' });
         }
   
         // 2. Buscar os itens do pedido
         db.all(
-          `SELECT oi.quantity, p.name, p.price 
+          `SELECT oi.quantity, p.name, p.price, o.total as order_total 
            FROM order_items oi 
            JOIN products p ON oi.product_id = p.id 
+           JOIN orders o ON oi.order_id = o.id
            WHERE oi.order_id = ?`,
           [order_id],
           async (err, items) => {
             if (err || !items || items.length === 0) {
               return res.status(500).json({ error: 'Itens do pedido não encontrados para criar a entrega.' });
             }
+
+            const orderTotal = items[0].order_total;
   
             try {
               const token = await getUberToken();
               
-              // 3. Montar o corpo da requisição com a ESTRUTURA FINAL E CORRETA
               const deliveryData = {
                 pickup_address: process.env.PICKUP_ADDRESS,
                 pickup_name: 'YUP', // Nome da sua loja
                 pickup_phone_number: '+554388742317', // Telefone da sua loja
-                dropoff_address: dropoff_address || order.delivery_address,
-                dropoff_name: order.user_name, // Nome do cliente, vindo do banco
-                dropoff_phone_number: order.user_phone || '+5511988888888', // Telefone do cliente, vindo do banco
-                manifest_total_value: parseFloat(order.total.toFixed(2)),
+                dropoff_address: dropoff_address || order.delivery_address, // Prioriza endereço do body, senão usa o do pedido
+                dropoff_name: order.user_name,
+                dropoff_phone_number: order.user_phone || '+554388742317', // Telefone do cliente
+                manifest_total_value: parseFloat(orderTotal.toFixed(2)),
                 manifest_items: items.map(item => ({
                   name: item.name,
                   quantity: item.quantity,
@@ -96,10 +104,16 @@ router.post('/create-delivery', authMiddleware, async (req, res) => {
                 }
               );
   
-              // Salvar ID da entrega no banco
+              // Salvar ID da entrega, status e o LINK DE RASTREAMENTO
               db.run(
-                'UPDATE orders SET delivery_id = ?, delivery_status = ? WHERE id = ?',
-                [response.data.id, response.data.status, order_id]
+                'UPDATE orders SET delivery_id = ?, delivery_status = ?, status = ?, delivery_tracking_url = ? WHERE id = ?',
+                [
+                    response.data.id, 
+                    response.data.status, 
+                    'out_for_delivery', 
+                    response.data.tracking_url,
+                    order_id
+                ]
               );
   
               res.json({
@@ -117,10 +131,10 @@ router.post('/create-delivery', authMiddleware, async (req, res) => {
       }
     );
   });
+
 // Obter cotação de entrega
 router.post('/delivery-quote', authMiddleware, async (req, res) => {
   const { dropoff_address } = req.body;
-
   const pickup_address = process.env.PICKUP_ADDRESS;
 
   if (!dropoff_address) {
@@ -145,7 +159,7 @@ router.post('/delivery-quote', authMiddleware, async (req, res) => {
     );
 
     res.json({
-      fee: response.data.fee / 100, // Convertendo de centavos para reais
+      fee: response.data.fee / 100, // Convertendo de centavos
       estimated_minutes: response.data.estimated_minutes,
       currency: response.data.currency
     });
@@ -167,32 +181,18 @@ router.post('/uber/webhook', async (req, res) => {
             return res.status(400).json({ error: 'Dados inválidos' });
         }
 
-        // Atualizar status da entrega
         const order = await uberDelivery.updateDeliveryStatus(delivery_id, status);
 
-        // Se o pedido foi entregue, atualizar o status geral do pedido
         if (status === 'delivered') {
-            await runAsync(
-                'UPDATE orders SET status = ? WHERE delivery_id = ?',
-                ['delivered', delivery_id]
-            );
+            await runAsync('UPDATE orders SET status = ? WHERE delivery_id = ?', ['delivered', delivery_id]);
         }
-        // Se houve um problema na entrega
         else if (status === 'failed' || status === 'cancelled') {
-            await runAsync(
-                'UPDATE orders SET status = ? WHERE delivery_id = ?',
-                ['delivery_failed', delivery_id]
-            );
+            await runAsync('UPDATE orders SET status = ? WHERE delivery_id = ?', ['delivery_failed', delivery_id]);
         }
-        // Se o entregador está a caminho
         else if (status === 'picking_up' || status === 'in_transit') {
-            await runAsync(
-                'UPDATE orders SET status = ? WHERE delivery_id = ?',
-                ['out_for_delivery', delivery_id]
-            );
+            await runAsync('UPDATE orders SET status = ? WHERE delivery_id = ?', ['out_for_delivery', delivery_id]);
         }
 
-        // Notificar cliente e admin sobre a atualização do status
         await notificationService.notifyStatusChange(order.id, status);
 
         res.json({ success: true });
@@ -219,10 +219,11 @@ router.get('/:orderId/status', async (req, res) => {
             return res.status(400).json({ error: 'Pedido não possui entrega associada' });
         }
 
-        const currentStatus = await uberDelivery.getDeliveryStatus(order.delivery_id);
+        // Se você tiver uma função para buscar o status atual na Uber, pode usá-la aqui
+        // const currentStatus = await uberDelivery.getDeliveryStatus(order.delivery_id);
 
         res.json({
-            delivery_status: currentStatus,
+            delivery_status: order.delivery_status, // Retorna o último status salvo
             tracking_url: order.delivery_tracking_url
         });
     } catch (error) {

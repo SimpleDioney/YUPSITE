@@ -1,223 +1,164 @@
 const express = require('express');
-const { authMiddleware } = require('../middleware/auth');
-const { body, validationResult } = require('express-validator');
-const crypto = require('crypto');
-const { MercadoPagoConfig, Preference, Payment } = require('mercadopago');
-const { getAsync, runAsync } = require('../utils/dbHelpers');
-const notificationService = require('../services/notifications');
-const db = require('../database/db');
 const router = express.Router();
+const db = require('../database/db');
+const { getAsync, getAllAsync } = require('../utils/dbHelpers');
 
-// Configure o cliente do Mercado Pago
-const client = new MercadoPagoConfig({ accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN });
-const preference = new Preference(client);
-const payment = new Payment(client);
+// SDK V3 do Mercado Pago
+const { MercadoPagoConfig, Preference, Payment, MerchantOrder } = require('mercadopago');
 
-// Rota para criar a PREFERÊNCIA de pagamento
-router.post(
-  '/create-preference',
-  authMiddleware,
-  [
-    body('order_id').isInt().withMessage('O ID do pedido é inválido.'),
-    body('delivery_fee').isFloat({ min: 0 }).withMessage('A taxa de entrega é inválida.')
-  ],
-  async (req, res) => {
-    // --- LOG 1: VERIFICAR DADOS DE ENTRADA ---
-    console.log('--- NOVA REQUISIÇÃO /create-preference ---');
-    console.log('Dados recebidos do frontend:', req.body);
+// Validação da Chave de Acesso
+if (!process.env.MERCADOPAGO_ACCESS_TOKEN) {
+    console.error("\nFATAL ERROR: A variável MERCADOPAGO_ACCESS_TOKEN não está definida no seu arquivo .env!");
+}
 
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
+const client = new MercadoPagoConfig({ 
+    accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN,
+    options: { timeout: 5000 }
+});
 
-    const { order_id, delivery_fee } = req.body;
-    const user_id = req.user.id;
 
+// Rota para criar a preferência de pagamento
+router.post('/create-preference', async (req, res) => {
+    console.log("\n--- [INÍCIO] ROTA /create-preference ---");
     try {
-      // --- LOG 2: VERIFICAR VARIÁVEIS DE AMBIENTE ---
-      console.log('Verificando variáveis de ambiente:');
-      console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
-      console.log('BACKEND_URL:', process.env.BACKEND_URL);
+        const { order_id, delivery_fee } = req.body;
 
-      if (!process.env.FRONTEND_URL || !process.env.BACKEND_URL) {
-          console.error('ERRO CRÍTICO: Variáveis FRONTEND_URL ou BACKEND_URL não estão definidas no arquivo .env!');
-          return res.status(500).json({ error: 'Erro de configuração do servidor.' });
-      }
-
-      const orderQuery = `
-        SELECT o.*, u.email, u.name, o.discount_amount, o.coupon_code
-        FROM orders o 
-        JOIN users u ON o.user_id = u.id 
-        WHERE o.id = ? AND o.user_id = ?
-      `;
-      const order = await getAsync(orderQuery, [order_id, user_id]);
-
-      if (!order) {
-        return res.status(404).json({ error: 'Pedido não encontrado ou não pertence a este usuário.' });
-      }
-
-      const itemsQuery = `
-          SELECT p.name as title, oi.quantity, oi.price as unit_price
-          FROM order_items oi
-          JOIN products p ON oi.product_id = p.id
-          WHERE oi.order_id = ?
-      `;
-      const itemsResult = await new Promise((resolve, reject) => {
-          db.all(itemsQuery, [order_id], (err, rows) => {
-              if (err) reject(err);
-              else resolve(rows);
-          });
-      });
-      
-      if (!itemsResult || itemsResult.length === 0) {
-        return res.status(400).json({ error: 'O pedido não contém itens.' });
-      }
-      
-      const items = itemsResult.map(item => ({
-        ...item,
-        unit_price: Number(item.unit_price.toFixed(2)),
-      }));
-
-      // Adiciona taxa de entrega se houver
-      if (delivery_fee > 0) {
-        items.push({
-          title: 'Taxa de Entrega',
-          quantity: 1,
-          unit_price: Number(delivery_fee.toFixed(2)),
-        });
-      }
-
-      // Adiciona desconto do cupom se houver
-      if (order.discount_amount > 0) {
-        items.push({
-          title: `Desconto${order.coupon_code ? ` (${order.coupon_code})` : ''}`,
-          quantity: 1,
-          unit_price: -Number(order.discount_amount.toFixed(2)), // Valor negativo para desconto
-        });
-      }
-
-      const preferenceData = {
-        body: {
-          items: items,
-          payer: {
-            name: order.name.split(' ')[0],
-            surname: order.name.split(' ').slice(1).join(' ') || 'N/A',
-            email: order.email,
-          },
-          back_urls: {
-            success: `${process.env.FRONTEND_URL}/success`,
-            failure: `${process.env.FRONTEND_URL}/failure`,
-            pending: `${process.env.FRONTEND_URL}/pending`,
-          },
-          auto_return: 'approved',
-          notification_url: `${process.env.BACKEND_URL}/api/payment/webhook`,
-          external_reference: order_id.toString(),
+        if (!order_id) {
+            return res.status(400).json({ error: 'O ID do pedido é obrigatório.' });
         }
-      };
-      
-      // --- LOG 3: OBJETO FINAL ENVIADO PARA O MERCADO PAGO ---
-      console.log('Objeto final que será enviado para a API do Mercado Pago:');
-      console.log(JSON.stringify(preferenceData.body, null, 2)); // Log apenas do 'body' para clareza
 
-      const requestOptions = {
-          idempotencyKey: crypto.randomBytes(16).toString('hex')
-      };
+        const order = await getAsync('SELECT * FROM orders WHERE id = ?', [order_id]);
+        const items = await getAllAsync('SELECT * FROM order_items WHERE order_id = ?', [order_id]);
+        const user = await getAsync('SELECT * FROM users WHERE id = ?', [order?.user_id]);
 
-      // --- CORREÇÃO APLICADA AQUI ---
-      // Juntamos o body da preferência e as opções da requisição em um único objeto.
-      const preferencePayload = {
-        body: preferenceData.body,
-        requestOptions: requestOptions
-      };
+        if (!order || !items || items.length === 0 || !user) {
+            return res.status(404).json({ error: 'Dados do pedido, itens ou usuário não encontrados.' });
+        }
 
-      // Passamos o objeto único para a função create.
-      const preferenceResponse = await preference.create(preferencePayload);
-      // --- FIM DA CORREÇÃO ---
+        const preferenceItems = items.map(item => ({
+            id: item.product_id.toString(),
+            title: item.product_name,
+            quantity: Number(item.quantity),
+            unit_price: Number(item.price)
+        }));
 
+        if (delivery_fee && Number(delivery_fee) > 0) {
+            preferenceItems.push({
+                id: "delivery",
+                title: "Taxa de Entrega",
+                quantity: 1,
+                unit_price: Number(delivery_fee)
+            });
+        }
+        
+        const preferenceBody = {
+            items: preferenceItems,
+            payer: {
+                name: user.name,
+                email: user.email,
+            },
+            back_urls: {
+                success: `${process.env.FRONTEND_URL}/success`,
+                failure: `${process.env.FRONTEND_URL}/failure`,
+                pending: `${process.env.FRONTEND_URL}/pending`,
+            },
+            auto_return: "approved",
+            notification_url: `${process.env.BACKEND_URL}/api/payment/webhook`,
+            external_reference: String(order_id),
+        };
 
-      console.log('Preferência criada com sucesso. ID:', preferenceResponse.id);
-      res.json({
-        preferenceId: preferenceResponse.id,
-        init_point: preferenceResponse.init_point,
-      });
+        const preference = new Preference(client);
+        const result = await preference.create({ body: preferenceBody });
+
+        if (!result || !result.id) {
+            throw new Error("A API do Mercado Pago não retornou um ID.");
+        }
+        
+        res.status(200).json({ 
+            preferenceId: result.id,
+            init_point: result.init_point
+        });
 
     } catch (error) {
-      console.error('Erro detalhado ao criar preferência de pagamento:', error);
-      const errorMessage = error.cause?.[0]?.description || error.message || 'Erro desconhecido ao criar pagamento.';
-      const statusCode = error.statusCode || 500;
-      res.status(statusCode).json({ error: errorMessage });
-    }
-  }
-);
-
-
-// --- ROTAS DE STATUS E WEBHOOK (com logs adicionados) ---
-
-router.get('/status/:paymentId', authMiddleware, async (req, res) => {
-    console.log(`Recebida verificação de status para o pagamento ID: ${req.params.paymentId}`);
-    try {
-        const paymentDetails = await payment.get({ id: req.params.paymentId });
-        res.json({ status: paymentDetails.status, external_reference: paymentDetails.external_reference });
-    } catch (error) {
-        console.error('Erro ao verificar status do pagamento:', error);
-        res.status(error.statusCode || 500).json({ error: 'Erro ao verificar status' });
+        console.error("\n--- [ERRO GERAL] Falha em /create-preference ---");
+        if (error.cause) {
+            console.error("Causa do erro (API do MP):", JSON.stringify(error.cause, null, 2));
+        } else {
+            console.error("Erro completo:", error.message);
+        }
+        res.status(500).json({ error: 'Erro interno ao criar a preferência de pagamento.', details: error.message });
     }
 });
 
+
+// Rota para receber notificações do Mercado Pago (Webhook)
 router.post('/webhook', async (req, res) => {
     const notification = req.body;
-    console.log('Webhook recebido:', notification);
+    console.log('\n--- [WEBHOOK] Notificação do Mercado Pago recebida ---', notification);
 
-    // Verificamos se a notificação é sobre um pagamento
-    if (notification.topic === 'payment' || notification.type === 'payment') {
-        const paymentId = notification.data.id;
+    try {
+        let paymentId = null;
 
-        try {
-            // Buscamos os detalhes completos do pagamento na API do Mercado Pago
-            const payment = await mercadopago.payment.findById(paymentId);
-            
-            if (payment && payment.body) {
-                const paymentStatus = payment.body.status; // ex: 'approved', 'pending', 'rejected'
-                const orderId = payment.body.external_reference;
+        // Extrai o ID do pagamento da notificação
+        if (notification.type === 'payment' && notification.data?.id) {
+            paymentId = notification.data.id;
+        } else if (notification.topic === 'merchant_order') {
+            const merchantOrder = new MerchantOrder(client);
+            const orderResponse = await merchantOrder.get({ merchantOrderId: notification.resource.split('/').pop() });
 
-                console.log(`Processando: Pedido ID=${orderId}, Status=${paymentStatus}`);
-
-                // --- LÓGICA ATUALIZADA ---
-                // 1. Atualiza o status no banco de dados para QUALQUER status recebido.
-                db.run(
-                    'UPDATE orders SET payment_status = ? WHERE id = ?',
-                    [paymentStatus, orderId],
-                    async function(err) {
-                        if (err) {
-                            console.error(`Erro ao atualizar status do pedido ${orderId} para ${paymentStatus}:`, err.message);
-                            return; // Encerra aqui se houver erro no DB
-                        }
-                        console.log(`Pedido ${orderId} atualizado para o status: ${paymentStatus}.`);
-
-                        // 2. Se o status for 'approved', dispara ações adicionais (como notificação).
-                        if (paymentStatus === 'approved') {
-                            console.log(`Status APROVADO para o pedido ${orderId}. Disparando ações.`);
-                            try {
-                                const user = await getAsync('SELECT u.* FROM users u JOIN orders o ON o.user_id = u.id WHERE o.id = ?', [orderId]);
-                                if (user && user.phone) {
-                                    const message = `Seu pedido #${orderId} foi aprovado e já estamos preparando! Acompanhe o status pelo site.`;
-                                    await sendNotification(user.phone, message);
-                                }
-                            } catch (notifyError) {
-                                console.error('Erro ao enviar notificação para pedido aprovado:', notifyError);
-                            }
-                        }
-                    }
-                );
+            if (orderResponse?.payments?.length > 0) {
+                paymentId = orderResponse.payments.pop().id;
             }
-        } catch (error) {
-            console.error('Erro ao processar webhook do Mercado Pago:', error);
         }
+
+        if (paymentId) {
+            console.log(`[WEBHOOK] ID do pagamento extraído: ${paymentId}`);
+            const payment = new Payment(client);
+            const paymentInfo = await payment.get({ id: paymentId });
+            
+            if (paymentInfo) {
+                const { status: paymentStatus, external_reference: orderId } = paymentInfo;
+
+                if (!orderId) {
+                    console.warn(`[WEBHOOK] Pagamento ${paymentId} não tem um ID de pedido (external_reference). Ignorando.`);
+                } else {
+                    console.log(`[WEBHOOK] Processando: Pedido ID=${orderId}, Status Pagamento=${paymentStatus}`);
+
+                    // --- LÓGICA AJUSTADA AQUI ---
+                    if (paymentStatus === 'approved') {
+                        // 1. Se o pagamento foi APROVADO, atualiza os dois status
+                        db.run(
+                            'UPDATE orders SET payment_status = ?, status = ? WHERE id = ?',
+                            ['approved', 'processing', orderId],
+                            function(err) {
+                                if (err) return console.error(`[WEBHOOK] Erro ao atualizar pedido ${orderId} para APROVADO:`, err.message);
+                                console.log(`[WEBHOOK][SUCESSO] Pedido ${orderId} atualizado para PAGO e PROCESSANDO.`);
+                                // AQUI VOCÊ PODE ADICIONAR A LÓGICA DE IMPRESSÃO
+                            }
+                        );
+                    } else {
+                        // 2. Para outros status (pending, rejected, etc.), atualiza apenas o status de pagamento
+                        db.run(
+                            'UPDATE orders SET payment_status = ? WHERE id = ?',
+                            [paymentStatus, orderId],
+                            function(err) {
+                                if (err) return console.error(`[WEBHOOK] Erro ao atualizar o status de pagamento do pedido ${orderId}:`, err.message);
+                                console.log(`[WEBHOOK][SUCESSO] Pedido ${orderId} atualizado para: ${paymentStatus}.`);
+                            }
+                        );
+                    }
+                }
+            }
+        } else {
+            console.log('[WEBHOOK] Notificação não continha um ID de pagamento processável.');
+        }
+
+    } catch (error) {
+        console.error('[WEBHOOK] Erro ao processar webhook:', error);
     }
-    // Responde ao Mercado Pago com status 200 para confirmar o recebimento
+    
+    // Responde 200 OK para o Mercado Pago parar de enviar a notificação
     res.status(200).send('ok');
 });
-
 
 module.exports = router;

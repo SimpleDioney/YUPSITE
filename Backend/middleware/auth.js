@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 
+// Sua função original - INTACTA
 const authMiddleware = (req, res, next) => {
   const token = req.header('Authorization')?.replace('Bearer ', '');
 
@@ -16,6 +17,7 @@ const authMiddleware = (req, res, next) => {
   }
 };
 
+// Sua função original - INTACTA
 const adminMiddleware = (req, res, next) => {
   if (!req.user.is_admin) {
     return res.status(403).json({ error: 'Acesso negado. Apenas administradores.' });
@@ -23,4 +25,20 @@ const adminMiddleware = (req, res, next) => {
   next();
 };
 
-module.exports = { authMiddleware, adminMiddleware };
+// --- NOVA FUNÇÃO ADICIONADA ---
+// Nova verificação para o sistema de impressão
+const printerMiddleware = (req, res, next) => {
+    const apiKey = req.headers['x-print-key'];
+    if (apiKey && apiKey === process.env.PRINT_API_KEY) {
+        next(); // Chave da impressora válida
+    } else {
+        res.status(401).send('Chave de API da impressora inválida ou ausente.');
+    }
+};
+
+// Exportamos as suas funções originais + a nova
+module.exports = { 
+    authMiddleware, 
+    adminMiddleware,
+    printerMiddleware // Adicionamos a nova função aqui
+};

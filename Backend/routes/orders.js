@@ -1,5 +1,5 @@
 const express = require('express');
-const { authMiddleware } = require('../middleware/auth');
+const { authMiddleware, printerMiddleware } = require('../middleware/auth');
 const db = require('../database/db');
 const { getAsync, runAsync } = require('../utils/dbHelpers');
 const { validateCoupon } = require('./coupons'); // Importa a função de validação de cupom
@@ -11,84 +11,86 @@ router.post('/', authMiddleware, async (req, res) => {
   const user_id = req.user.id;
 
   if (!items || items.length === 0) {
-    return res.status(400).json({ error: 'Pedido deve conter pelo menos um item' });
+      return res.status(400).json({ error: 'Pedido deve conter pelo menos um item' });
   }
 
   try {
-    await runAsync('BEGIN TRANSACTION');
+      await runAsync('BEGIN TRANSACTION');
 
-    // 1. Calcular o total bruto (sem desconto)
-    let subtotal = 0;
-    for (const item of items) {
-      const product = await getAsync('SELECT * FROM products WHERE id = CAST(? AS INTEGER) AND is_active = 1', [item.product_id]);
-      if (!product) throw new Error(`Produto não encontrado: id ${item.product_id}`);
-      if (product.stock < item.quantity) throw new Error(`Estoque insuficiente para ${product.name}`);
-      subtotal += product.price * item.quantity;
-      item.price = product.price; // Armazena o preço no momento da compra
-    }
+      // 1. Calcular o subtotal e validar estoque
+      let subtotal = 0;
+      for (const item of items) {
+          const product = await getAsync('SELECT * FROM products WHERE id = CAST(? AS INTEGER) AND is_active = 1', [item.product_id]);
+          if (!product) throw new Error(`Produto não encontrado: id ${item.product_id}`);
+          if (product.stock < item.quantity) throw new Error(`Estoque insuficiente para ${product.name}`);
+          
+          subtotal += product.price * item.quantity;
+          item.price = product.price; // Garante o preço do momento da compra
+      }
 
-    // 2. Validar o cupom e calcular o desconto
-    let discountAmount = 0;
-    let validCoupon = null;
-    const safeDeliveryFee = delivery_fee || 0;
+      // 2. Validar o cupom
+      let discountAmount = 0;
+      let validCoupon = null;
+      const safeDeliveryFee = delivery_fee || 0;
 
-    if (coupon_code) {
-        const couponValidation = await validateCoupon(coupon_code, subtotal);
-        if (!couponValidation.isValid) {
-            // Se o cupom for inválido, interrompe a transação.
-            await runAsync('ROLLBACK');
-            return res.status(400).json({ error: couponValidation.message });
-        }
-        discountAmount = couponValidation.discountAmount;
-        validCoupon = couponValidation.coupon;
-    }
+      if (coupon_code) {
+          const couponValidation = await validateCoupon(coupon_code, subtotal);
+          if (!couponValidation.isValid) {
+              await runAsync('ROLLBACK');
+              return res.status(400).json({ error: couponValidation.message });
+          }
+          discountAmount = couponValidation.discountAmount;
+          validCoupon = couponValidation.coupon;
+      }
 
-    // Calcula o total final: subtotal + frete - desconto
-    let finalTotal = subtotal + safeDeliveryFee - discountAmount;
+      // 3. Calcular o total final
+      let finalTotal = subtotal + safeDeliveryFee - discountAmount;
 
-    // 3. Criar o pedido no banco de dados com os valores corretos
-    const insertOrder = await runAsync(
-      'INSERT INTO orders (user_id, total, subtotal, delivery_address, payment_method, coupon_code, discount_amount, delivery_fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [user_id, finalTotal, subtotal, delivery_address, payment_method, validCoupon ? validCoupon.code : null, discountAmount, delivery_fee || 0]
-    );
-
-    const order_id = insertOrder.lastID;
-
-    // 4. Adicionar itens e atualizar o estoque
-    for (const item of items) {
-      // Buscar o produto novamente para ter certeza que temos todos os dados
-      const product = await getAsync('SELECT * FROM products WHERE id = ?', [item.product_id]);
-      await runAsync(
-        'INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)',
-        [order_id, item.product_id, item.quantity, item.price]
+      // 4. Criar o pedido
+      const insertOrder = await runAsync(
+          'INSERT INTO orders (user_id, total, subtotal, delivery_address, payment_method, coupon_code, discount_amount, delivery_fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          [user_id, finalTotal, subtotal, delivery_address, payment_method, validCoupon ? validCoupon.code : null, discountAmount, delivery_fee || 0]
       );
+      const order_id = insertOrder.lastID;
 
-      await runAsync(
-        'UPDATE products SET stock = stock - ? WHERE id = ?',
-        [item.quantity, item.product_id]
-      );
-    }
+      // 5. Adicionar itens do pedido (com nome e foto) e atualizar estoque
+      for (const item of items) {
+          // Busca o produto novamente para garantir que temos nome e foto
+          const product = await getAsync('SELECT name, photo FROM products WHERE id = ?', [item.product_id]);
+          
+          // --- A CORREÇÃO ESTÁ AQUI ---
+          // Adicionamos 'product_name' e 'product_photo' na inserção
+          await runAsync(
+              'INSERT INTO order_items (order_id, product_id, quantity, price, product_name) VALUES (?, ?, ?, ?, ?)',
+              [order_id, item.product_id, item.quantity, item.price, product.name]
+          );
 
-    // 5. Incrementar o uso do cupom, se um foi usado
-    if (validCoupon) {
-        await runAsync(
-            'UPDATE coupons SET times_used = times_used + 1 WHERE id = ?',
-            [validCoupon.id]
-        );
-    }
+          // Atualiza o estoque
+          await runAsync(
+              'UPDATE products SET stock = stock - ? WHERE id = ?',
+              [item.quantity, item.product_id]
+          );
+      }
 
-    await runAsync('COMMIT');
+      // 6. Incrementar o uso do cupom
+      if (validCoupon) {
+          await runAsync('UPDATE coupons SET times_used = times_used + 1 WHERE id = ?', [validCoupon.id]);
+      }
 
-    res.status(201).json({
-      message: 'Pedido criado com sucesso',
-      order_id,
-      total: finalTotal,
-    });
+      await runAsync('COMMIT');
+
+      res.status(201).json({
+          message: 'Pedido criado com sucesso',
+          order_id,
+          total: finalTotal,
+      });
   } catch (error) {
-    await runAsync('ROLLBACK');
-    res.status(400).json({ error: error.message || 'Erro ao criar pedido' });
+      await runAsync('ROLLBACK');
+      console.error("Erro ao criar pedido:", error); // Adicionado log de erro
+      res.status(400).json({ error: error.message || 'Erro ao criar pedido' });
   }
 });
+
 
 // Listar pedidos do usuário (sem alterações)
 router.get('/my-orders', authMiddleware, (req, res) => {
@@ -117,6 +119,56 @@ router.get('/my-orders', authMiddleware, (req, res) => {
       res.json(ordersWithNumericValues);
     }
   );
+});
+
+
+router.get('/to-print', printerMiddleware, (req, res) => {
+    const sql = `
+        SELECT o.*, 
+               u.name as user_name, 
+               u.phone as user_phone,
+               u.address as user_address
+        FROM orders o
+        JOIN users u ON o.user_id = u.id
+        WHERE o.payment_status = 'approved' AND o.is_printed = 0
+    `;
+    db.all(sql, [], (err, orders) => {
+        if (err) {
+            console.error('Erro ao buscar pedidos para impressão:', err);
+            return res.status(500).json({ error: 'Erro interno do servidor' });
+        }
+        const promises = orders.map(order => {
+            return new Promise((resolve, reject) => {
+                db.all('SELECT * FROM order_items WHERE order_id = ?', [order.id], (err, items) => {
+                    if (err) return reject(err);
+                    order.items = items;
+                    resolve(order);
+                });
+            });
+        });
+        Promise.all(promises)
+            .then(completedOrders => res.json(completedOrders))
+            .catch(error => {
+                console.error('Erro ao buscar itens dos pedidos:', error);
+                res.status(500).json({ error: 'Erro ao buscar itens dos pedidos' });
+            });
+    });
+});
+
+// ROTA PUT PARA MARCAR UM PEDIDO COMO IMPRESSO
+// Adicionamos o 'printerMiddleware' para proteger a rota
+router.put('/:id/mark-as-printed', printerMiddleware, (req, res) => {
+    const { id } = req.params;
+    db.run('UPDATE orders SET is_printed = 1 WHERE id = ?', [id], function(err) {
+        if (err) {
+            console.error(`Erro ao marcar pedido #${id} como impresso:`, err);
+            return res.status(500).json({ error: 'Erro interno do servidor' });
+        }
+        if (this.changes === 0) {
+            return res.status(404).json({ error: 'Pedido não encontrado' });
+        }
+        res.json({ success: true, message: `Pedido #${id} marcado como impresso.` });
+    });
 });
 
 // Detalhes do pedido (sem alterações)
@@ -178,63 +230,6 @@ router.get('/:id', authMiddleware, (req, res) => {
       );
     }
   );
-});
-
-router.get('/to-print', (req, res) => {
-  const sql = `
-      SELECT o.*, 
-             u.name as user_name, 
-             u.phone as user_phone,
-             u.address as user_address
-      FROM orders o
-      JOIN users u ON o.user_id = u.id
-      WHERE o.payment_status = 'approved' AND o.is_printed = 0
-  `;
-
-  db.all(sql, [], (err, orders) => {
-      if (err) {
-          console.error('Erro ao buscar pedidos para impressão:', err);
-          return res.status(500).json({ error: 'Erro interno do servidor' });
-      }
-
-      // Para cada pedido, busca os itens dele
-      const promises = orders.map(order => {
-          return new Promise((resolve, reject) => {
-              db.all('SELECT * FROM order_items WHERE order_id = ?', [order.id], (err, items) => {
-                  if (err) {
-                      return reject(err);
-                  }
-                  order.items = items;
-                  resolve(order);
-              });
-          });
-      });
-
-      Promise.all(promises)
-          .then(completedOrders => {
-              res.json(completedOrders);
-          })
-          .catch(error => {
-              console.error('Erro ao buscar itens dos pedidos:', error);
-              res.status(500).json({ error: 'Erro ao buscar itens dos pedidos' });
-          });
-  });
-});
-
-// ROTA PUT PARA MARCAR UM PEDIDO COMO IMPRESSO
-// Após a impressora imprimir um pedido, ela chamará esta rota.
-router.put('/:id/mark-as-printed', (req, res) => {
-  const { id } = req.params;
-  db.run('UPDATE orders SET is_printed = 1 WHERE id = ?', [id], function(err) {
-      if (err) {
-          console.error(`Erro ao marcar pedido #${id} como impresso:`, err);
-          return res.status(500).json({ error: 'Erro interno do servidor' });
-      }
-      if (this.changes === 0) {
-          return res.status(404).json({ error: 'Pedido não encontrado' });
-      }
-      res.json({ success: true, message: `Pedido #${id} marcado como impresso.` });
-  });
 });
 
 module.exports = router;

@@ -180,4 +180,61 @@ router.get('/:id', authMiddleware, (req, res) => {
   );
 });
 
+router.get('/to-print', (req, res) => {
+  const sql = `
+      SELECT o.*, 
+             u.name as user_name, 
+             u.phone as user_phone,
+             u.address as user_address
+      FROM orders o
+      JOIN users u ON o.user_id = u.id
+      WHERE o.payment_status = 'approved' AND o.is_printed = 0
+  `;
+
+  db.all(sql, [], (err, orders) => {
+      if (err) {
+          console.error('Erro ao buscar pedidos para impressão:', err);
+          return res.status(500).json({ error: 'Erro interno do servidor' });
+      }
+
+      // Para cada pedido, busca os itens dele
+      const promises = orders.map(order => {
+          return new Promise((resolve, reject) => {
+              db.all('SELECT * FROM order_items WHERE order_id = ?', [order.id], (err, items) => {
+                  if (err) {
+                      return reject(err);
+                  }
+                  order.items = items;
+                  resolve(order);
+              });
+          });
+      });
+
+      Promise.all(promises)
+          .then(completedOrders => {
+              res.json(completedOrders);
+          })
+          .catch(error => {
+              console.error('Erro ao buscar itens dos pedidos:', error);
+              res.status(500).json({ error: 'Erro ao buscar itens dos pedidos' });
+          });
+  });
+});
+
+// ROTA PUT PARA MARCAR UM PEDIDO COMO IMPRESSO
+// Após a impressora imprimir um pedido, ela chamará esta rota.
+router.put('/:id/mark-as-printed', (req, res) => {
+  const { id } = req.params;
+  db.run('UPDATE orders SET is_printed = 1 WHERE id = ?', [id], function(err) {
+      if (err) {
+          console.error(`Erro ao marcar pedido #${id} como impresso:`, err);
+          return res.status(500).json({ error: 'Erro interno do servidor' });
+      }
+      if (this.changes === 0) {
+          return res.status(404).json({ error: 'Pedido não encontrado' });
+      }
+      res.json({ success: true, message: `Pedido #${id} marcado como impresso.` });
+  });
+});
+
 module.exports = router;

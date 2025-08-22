@@ -166,94 +166,58 @@ router.get('/status/:paymentId', authMiddleware, async (req, res) => {
 });
 
 router.post('/webhook', async (req, res) => {
-  console.log('--- WEBHOOK MERCADO PAGO RECEBIDO ---');
-  console.log('Headers:', req.headers);
-  console.log('Body:', req.body);
-  const topic = req.body.topic || req.query.topic;
+    const notification = req.body;
+    console.log('Webhook recebido:', notification);
 
-  if (topic === 'payment') {
-      const paymentId = req.body.data?.id || req.query.id;
-      if (!paymentId) {
-          console.log('Webhook de pagamento recebido sem ID. Ignorando.');
-          return res.sendStatus(200);
-      }
+    // Verificamos se a notificação é sobre um pagamento
+    if (notification.topic === 'payment' || notification.type === 'payment') {
+        const paymentId = notification.data.id;
 
-      console.log(`Processando webhook para o pagamento ID: ${paymentId}`);
-      try {
-          const paymentResult = await payment.get({ id: paymentId });
-          const order_id = paymentResult.external_reference;
-          const status = paymentResult.status;
+        try {
+            // Buscamos os detalhes completos do pagamento na API do Mercado Pago
+            const payment = await mercadopago.payment.findById(paymentId);
+            
+            if (payment && payment.body) {
+                const paymentStatus = payment.body.status; // ex: 'approved', 'pending', 'rejected'
+                const orderId = payment.body.external_reference;
 
-          if (order_id && status) {
-              // Atualizar o status do pagamento
-              await runAsync(
-                  'UPDATE orders SET payment_status = ? WHERE id = ?',
-                  [status, order_id]
-              );
-              console.log(`Pedido ${order_id} atualizado para o status de pagamento: ${status}`);
+                console.log(`Processando: Pedido ID=${orderId}, Status=${paymentStatus}`);
 
-              // Se o pagamento foi aprovado, iniciar processo de entrega
-              if (status === 'approved') {
-                  try {
-                      // Buscar informações do pedido
-                      const order = await getAsync(
-                          'SELECT delivery_address FROM orders WHERE id = ?',
-                          [order_id]
-                      );
+                // --- LÓGICA ATUALIZADA ---
+                // 1. Atualiza o status no banco de dados para QUALQUER status recebido.
+                db.run(
+                    'UPDATE orders SET payment_status = ? WHERE id = ?',
+                    [paymentStatus, orderId],
+                    async function(err) {
+                        if (err) {
+                            console.error(`Erro ao atualizar status do pedido ${orderId} para ${paymentStatus}:`, err.message);
+                            return; // Encerra aqui se houver erro no DB
+                        }
+                        console.log(`Pedido ${orderId} atualizado para o status: ${paymentStatus}.`);
 
-                      if (order) {
-                          // TODO: Integrar com a API do Uber
-                          // const uberResponse = await requestUberDelivery(order.delivery_address);
-                          
-                          // Atualizar status do pedido para "em preparação"
-                          await runAsync(
-                              'UPDATE orders SET status = ? WHERE id = ?',
-                              ['preparing', order_id]
-                          );
-
-                          // Notificar admin e cliente sobre o status
-                          await notificationService.notifyStatusChange(order_id, 'preparing');
-                      }
-                  } catch (deliveryError) {
-                      console.error('Erro ao iniciar entrega:', deliveryError);
-                      // Não falhar o webhook por erro na entrega
-                  }
-              } 
-              // Se o pagamento foi recusado, cancelar o pedido
-              else if (status === 'rejected' || status === 'cancelled') {
-                  try {
-                      // Atualizar status do pedido para cancelado
-                      await runAsync(
-                          'UPDATE orders SET status = ? WHERE id = ?',
-                          ['cancelled', order_id]
-                      );
-
-                      // Restaurar estoque dos produtos
-                      const orderItems = await getAsync(
-                          'SELECT product_id, quantity FROM order_items WHERE order_id = ?',
-                          [order_id]
-                      );
-
-                      for (const item of orderItems) {
-                          await runAsync(
-                              'UPDATE products SET stock = stock + ? WHERE id = ?',
-                              [item.quantity, item.product_id]
-                          );
-                      }
-
-                      // Notificar admin e cliente sobre o cancelamento
-                      await notificationService.notifyStatusChange(order_id, 'cancelled');
-                  } catch (cancellationError) {
-                      console.error('Erro ao cancelar pedido:', cancellationError);
-                  }
-              }
-          }
-      } catch (error) {
-          console.error(`Erro no webhook ao processar pagamento ${paymentId}:`, error);
-          return res.sendStatus(500);
-      }
-  }
-  res.sendStatus(200);
+                        // 2. Se o status for 'approved', dispara ações adicionais (como notificação).
+                        if (paymentStatus === 'approved') {
+                            console.log(`Status APROVADO para o pedido ${orderId}. Disparando ações.`);
+                            try {
+                                const user = await getAsync('SELECT u.* FROM users u JOIN orders o ON o.user_id = u.id WHERE o.id = ?', [orderId]);
+                                if (user && user.phone) {
+                                    const message = `Seu pedido #${orderId} foi aprovado e já estamos preparando! Acompanhe o status pelo site.`;
+                                    await sendNotification(user.phone, message);
+                                }
+                            } catch (notifyError) {
+                                console.error('Erro ao enviar notificação para pedido aprovado:', notifyError);
+                            }
+                        }
+                    }
+                );
+            }
+        } catch (error) {
+            console.error('Erro ao processar webhook do Mercado Pago:', error);
+        }
+    }
+    // Responde ao Mercado Pago com status 200 para confirmar o recebimento
+    res.status(200).send('ok');
 });
+
 
 module.exports = router;

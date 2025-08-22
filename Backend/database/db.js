@@ -50,6 +50,7 @@ db.serialize(() => {
       delivery_address TEXT,
       delivery_status TEXT DEFAULT 'pending',
       delivery_fee REAL DEFAULT 0,
+      is_printed BOOLEAN DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users (id)
     )
@@ -127,6 +128,25 @@ db.serialize(() => {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Adiciona a coluna is_printed se ela não existir
+  db.all("PRAGMA table_info(orders)", (err, columns) => {
+    if (err) {
+        console.error("Erro ao obter informações da tabela de pedidos", err);
+        return;
+    }
+
+    const hasIsPrintedColumn = columns.some(column => column.name === 'is_printed');
+    if (!hasIsPrintedColumn) {
+        db.run('ALTER TABLE orders ADD COLUMN is_printed BOOLEAN DEFAULT 0', (err) => {
+            if (err) {
+                console.error("Erro ao adicionar a coluna is_printed na tabela de pedidos", err);
+            } else {
+                console.log("Coluna is_printed adicionada a tabela de pedidos.");
+            }
+        });
+    }
+  });
 });
 
 module.exports = db;
